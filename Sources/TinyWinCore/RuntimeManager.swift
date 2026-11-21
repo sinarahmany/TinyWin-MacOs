@@ -156,6 +156,10 @@ public final class RuntimeManager: Sendable {
 
         _ = try? runHostTool("/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", paths.runtimeDir.path])
 
+        // 4b. Apply surgical Wine 11.21 SysLink 1px-wrap infinite-loop hotfix in comctl32_v6.dll
+        // Fixes UI thread 100% CPU freeze when Windows apps create 1x1 SysLink controls containing spaces.
+        patchComctl32SysLinkBug(in: paths.wineLibDir.appendingPathComponent("x86_64-windows/comctl32_v6.dll"))
+
         // 5. Save manifest
         let manifest = RuntimeManifest(
             wineVersion: Self.defaultWineVersion,
@@ -385,6 +389,24 @@ public final class RuntimeManager: Sendable {
             total += Int64(vals.totalFileAllocatedSize ?? vals.fileSize ?? 0)
         }
         return total
+    }
+
+    /// Patches an upstream Wine 11.21 bug in `comctl32_v6.dll` (`SYSLINK_Render`):
+    /// When a SysLink control is initialized at 1x1 pixels and its text contains a space,
+    /// `GetTextExtentExPointW` returns `nFit == 0`, matching `BreakChar` without advancing,
+    /// causing an infinite 100% CPU loop that freezes the app's UI thread and mouse input.
+    /// Replaces 4 bytes of NOP padding (`0f 1f 40 00`) with `test ecx, ecx; jz +0x36` (`85 c9 74 36`).
+    public func patchComctl32SysLinkBug(in dllURL: URL) {
+        guard let data = try? Data(contentsOf: dllURL) else { return }
+        let oldSig = Data([0x66, 0x41, 0x39, 0xD0, 0x75, 0x1F, 0x0F, 0x1F, 0x40, 0x00, 0x89, 0xCD, 0x85, 0xED])
+        let newSig = Data([0x66, 0x41, 0x39, 0xD0, 0x75, 0x1F, 0x85, 0xC9, 0x74, 0x36, 0x89, 0xCD, 0x85, 0xED])
+        guard let range = data.range(of: oldSig),
+              data.range(of: oldSig, in: range.upperBound..<data.endIndex) == nil else {
+            return
+        }
+        var patched = data
+        patched.replaceSubrange(range, with: newSig)
+        try? patched.write(to: dllURL, options: .atomic)
     }
 }
 
