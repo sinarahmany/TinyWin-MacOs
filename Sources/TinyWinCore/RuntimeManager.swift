@@ -29,8 +29,8 @@ public final class RuntimeManager: Sendable {
     public var isDXMTInstalled: Bool {
         let fm = FileManager.default
         let unixMetal = paths.wineLibDir.appendingPathComponent("x86_64-unix/winemetal.so")
-        let d3d11 = paths.wineLibDir.appendingPathComponent("x86_64-windows/d3d11.dll")
-        let dxgi = paths.wineLibDir.appendingPathComponent("x86_64-windows/dxgi.dll")
+        let d3d11 = paths.dxmtDir.appendingPathComponent("x86_64-windows/d3d11.dll")
+        let dxgi = paths.dxmtDir.appendingPathComponent("x86_64-windows/dxgi.dll")
         return fm.fileExists(atPath: unixMetal.path)
             && fm.fileExists(atPath: d3d11.path)
             && fm.fileExists(atPath: dxgi.path)
@@ -186,8 +186,9 @@ public final class RuntimeManager: Sendable {
         ))
     }
 
-    /// Locates DXMT architecture folders (`x86_64-unix`, `x86_64-windows`, `i386-windows`)
-    /// inside the extracted archive and installs them cleanly into Wine's builtin library tree.
+    /// Stores DXMT cleanly in `Runtime/DXMT/` without overwriting Wine's stock `d3d11.dll`/`dxgi.dll`,
+    /// so desktop apps (Direct2D) can use stock WineD3D/MoltenVK while 3D games use DXMT → Metal per-bottle.
+    /// Only installs `winemetal.so` and `winemetal.dll` into Wine's shared library tree (no conflicts).
     private func installDXMTFiles(from extractDir: URL) throws {
         let fm = FileManager.default
         let archFolders = ["x86_64-unix", "x86_64-windows", "i386-windows", "i386-unix"]
@@ -210,24 +211,26 @@ public final class RuntimeManager: Sendable {
             let srcFolder = dxmtRoot.appendingPathComponent(folder, isDirectory: true)
             guard fm.fileExists(atPath: srcFolder.path) else { continue }
 
-            // Save backup copy in paths.dxmtDir/<folder>
-            let backupFolder = paths.dxmtDir.appendingPathComponent(folder, isDirectory: true)
-            try fm.createDirectory(at: backupFolder, withIntermediateDirectories: true)
+            // Store complete DXMT release cleanly in paths.dxmtDir/<folder>
+            let dxmtFolder = paths.dxmtDir.appendingPathComponent(folder, isDirectory: true)
+            try fm.createDirectory(at: dxmtFolder, withIntermediateDirectories: true)
 
-            // Target inside Wine lib/wine/<folder>
             let wineTargetFolder = paths.wineLibDir.appendingPathComponent(folder, isDirectory: true)
             try fm.createDirectory(at: wineTargetFolder, withIntermediateDirectories: true)
 
             let files = try fm.contentsOfDirectory(at: srcFolder, includingPropertiesForKeys: nil)
             for file in files {
                 let name = file.lastPathComponent
-                let backupDest = backupFolder.appendingPathComponent(name)
-                if fm.fileExists(atPath: backupDest.path) { try fm.removeItem(at: backupDest) }
-                try fm.copyItem(at: file, to: backupDest)
+                let dxmtDest = dxmtFolder.appendingPathComponent(name)
+                if fm.fileExists(atPath: dxmtDest.path) { try fm.removeItem(at: dxmtDest) }
+                try fm.copyItem(at: file, to: dxmtDest)
 
-                let wineDest = wineTargetFolder.appendingPathComponent(name)
-                if fm.fileExists(atPath: wineDest.path) { try fm.removeItem(at: wineDest) }
-                try fm.copyItem(at: file, to: wineDest)
+                // Only copy winemetal helper modules into Wine.app so stock Wine d3d11/dxgi stay intact!
+                if name == "winemetal.so" || name == "winemetal.dll" {
+                    let wineDest = wineTargetFolder.appendingPathComponent(name)
+                    if fm.fileExists(atPath: wineDest.path) { try fm.removeItem(at: wineDest) }
+                    try fm.copyItem(at: file, to: wineDest)
+                }
                 installedCount += 1
             }
         }
@@ -237,25 +240,47 @@ public final class RuntimeManager: Sendable {
         }
     }
 
-    /// Copies DXMT `winemetal.dll` into a Wine prefix's system32 (and syswow64 if present)
-    /// so builtin DXMT hooks resolve seamlessly.
-    public func syncDXMTIntoPrefix(_ prefixDir: URL) throws {
+    /// Applies the selected graphics backend (`dxmt` vs `wined3d`) cleanly to a bottle's `system32`/`syswow64`
+    /// without affecting any other bottle.
+    public func applyGraphicsBackend(_ backend: GraphicsBackend, toPrefix prefixDir: URL) throws {
         let fm = FileManager.default
-        let dll64 = paths.dxmtDir.appendingPathComponent("x86_64-windows/winemetal.dll")
-        let sys32 = prefixDir.appendingPathComponent("drive_c/windows/system32", isDirectory: true)
-        if fm.fileExists(atPath: dll64.path) && fm.fileExists(atPath: sys32.path) {
-            let dest = sys32.appendingPathComponent("winemetal.dll")
-            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try fm.copyItem(at: dll64, to: dest)
-        }
+        let dllNames = ["d3d11.dll", "dxgi.dll", "d3d10core.dll"]
+        let archMappings: [(wineArch: String, prefixSubdir: String)] = [
+            ("x86_64-windows", "drive_c/windows/system32"),
+            ("i386-windows", "drive_c/windows/syswow64")
+        ]
 
-        let dll32 = paths.dxmtDir.appendingPathComponent("i386-windows/winemetal.dll")
-        let syswow = prefixDir.appendingPathComponent("drive_c/windows/syswow64", isDirectory: true)
-        if fm.fileExists(atPath: dll32.path) && fm.fileExists(atPath: syswow.path) {
-            let dest = syswow.appendingPathComponent("winemetal.dll")
-            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try fm.copyItem(at: dll32, to: dest)
+        for (arch, subdir) in archMappings {
+            let destDir = prefixDir.appendingPathComponent(subdir, isDirectory: true)
+            guard fm.fileExists(atPath: destDir.path) else { continue }
+
+            let srcBase = (backend == .dxmt)
+                ? paths.dxmtDir.appendingPathComponent(arch, isDirectory: true)
+                : paths.wineLibDir.appendingPathComponent(arch, isDirectory: true)
+
+            for name in dllNames {
+                let src = srcBase.appendingPathComponent(name)
+                guard fm.fileExists(atPath: src.path) else { continue }
+                let dest = destDir.appendingPathComponent(name)
+                if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+                try fm.copyItem(at: src, to: dest)
+            }
+
+            // Sync winemetal.dll when DXMT is active
+            let metalSrc = paths.dxmtDir.appendingPathComponent("\(arch)/winemetal.dll")
+            let metalDest = destDir.appendingPathComponent("winemetal.dll")
+            if backend == .dxmt && fm.fileExists(atPath: metalSrc.path) {
+                if fm.fileExists(atPath: metalDest.path) { try fm.removeItem(at: metalDest) }
+                try fm.copyItem(at: metalSrc, to: metalDest)
+            } else if backend != .dxmt && fm.fileExists(atPath: metalDest.path) {
+                try? fm.removeItem(at: metalDest)
+            }
         }
+    }
+
+    /// Legacy alias kept for source compatibility; delegates to `applyGraphicsBackend(.dxmt, toPrefix:)`.
+    public func syncDXMTIntoPrefix(_ prefixDir: URL) throws {
+        try applyGraphicsBackend(.dxmt, toPrefix: prefixDir)
     }
 
     /// Optional: Import Apple's proprietary Game Porting Toolkit (`D3DMetal.framework` + `libd3dshared.dylib`)

@@ -80,8 +80,8 @@ public final class BottleManager: Sendable {
         // Wait cleanly for wineserver to flush registry files and exit
         try waitAndShutdownServer(prefixDir: paths.templateBottleDir)
 
-        // Sync DXMT winemetal.dll into template so all clones have Metal ready out of the box
-        try runtime.syncDXMTIntoPrefix(paths.templateBottleDir)
+        // Keep template on stock WineD3D/MoltenVK (clean default for desktop apps; DXMT is applied per-bottle for games)
+        try runtime.applyGraphicsBackend(.wined3d, toPrefix: paths.templateBottleDir)
 
         // Apply universal zero-bloat registry tweaks (disable crash dialogs, enable font smoothing, full-size Retina 192 DPI)
         try applyRegistryTweaks(
@@ -160,6 +160,9 @@ public final class BottleManager: Sendable {
             )
         }
 
+        // Apply selected graphics backend (DXMT for games, WineD3D/MoltenVK for desktop apps)
+        try runtime.applyGraphicsBackend(bottle.graphics.backend, toPrefix: prefixDir)
+
         // Enforce bottle-specific filesystem isolation & Seatbelt profile
         try SandboxBuilder.enforcePrefixIsolation(prefixDir: prefixDir, security: bottle.security)
         _ = try SandboxBuilder.writeProfile(bottle: bottle, paths: paths)
@@ -170,6 +173,7 @@ public final class BottleManager: Sendable {
 
     public func updateBottle(_ bottle: BottleConfig) throws {
         let prefixDir = paths.bottlePrefixDir(id: bottle.id)
+        try runtime.applyGraphicsBackend(bottle.graphics.backend, toPrefix: prefixDir)
         try SandboxBuilder.enforcePrefixIsolation(prefixDir: prefixDir, security: bottle.security)
         try applyRegistryTweaks(
             prefixDir: prefixDir,

@@ -151,4 +151,16 @@ final class TinyWinCoreTests: XCTestCase {
         XCTAssertEqual(bm.sanitizeBottleID("Steam Games 2026!"), "steam-games-2026")
         XCTAssertEqual(bm.sanitizeBottleID("  Work_Apps  "), "work_apps")
     }
+
+    func testBottlePresetGraphicsDefaults() {
+        let appBottle = BottleConfig(id: "apps", name: "Apps", preset: .app)
+        XCTAssertEqual(appBottle.graphics.backend, .wined3d)
+        XCTAssertTrue(appBottle.graphics.retinaMode)
+        XCTAssertEqual(appBottle.graphics.dpi, 192)
+
+        let gameBottle = BottleConfig(id: "games", name: "Games", preset: .game)
+        XCTAssertEqual(gameBottle.graphics.backend, .dxmt)
+        XCTAssertFalse(gameBottle.graphics.retinaMode)
+        XCTAssertEqual(gameBottle.graphics.dpi, 96)
+    }
 }

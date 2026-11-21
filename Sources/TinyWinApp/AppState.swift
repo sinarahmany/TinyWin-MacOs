@@ -151,13 +151,24 @@ final class AppState {
     }
 
     func updateBottle(_ bottle: BottleConfig) {
+        // Optimistically reflect change in UI immediately so toggles feel instant
+        if let idx = bottles.firstIndex(where: { $0.id == bottle.id }) {
+            bottles[idx] = bottle
+        }
         let bm = self.bottleManager
-        do {
-            try bm.updateBottle(bottle)
-            refreshAll()
-            statusMessage = "Updated settings for '\(bottle.name)'."
-        } catch {
-            errorMessage = error.localizedDescription
+        Task.detached(priority: .userInitiated) {
+            do {
+                try bm.updateBottle(bottle)
+                await MainActor.run { [weak self] in
+                    self?.refreshAll()
+                    self?.statusMessage = "Updated settings for '\(bottle.name)'."
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.refreshAll()
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 

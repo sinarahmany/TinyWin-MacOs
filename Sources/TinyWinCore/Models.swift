@@ -19,9 +19,9 @@ public enum GraphicsBackend: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .dxmt: return "DXMT (DirectX 10/11 → Metal)"
-        case .wined3d: return "WineD3D (OpenGL / 2D Apps)"
-        case .d3dmetal: return "D3DMetal (DirectX 12 → Metal)"
+        case .dxmt: return "DXMT → Metal (Best for DX10/11 Games)"
+        case .wined3d: return "WineD3D / MoltenVK (Best for Desktop Apps)"
+        case .d3dmetal: return "D3DMetal → Metal (DX12 Games)"
         }
     }
 }
@@ -165,8 +165,9 @@ public struct BottleConfig: Codable, Identifiable, Equatable, Sendable {
         self.windowsVersion = windowsVersion
         self.security = security
         self.graphics = graphics ?? BottleGraphicsConfig(
-            backend: preset == .game ? .dxmt : .dxmt,
+            backend: preset == .game ? .dxmt : .wined3d,
             retinaMode: preset == .app,
+            dpi: preset == .app ? 192 : 96,
             metalHUD: false,
             fastSync: true,
             quietLogs: true

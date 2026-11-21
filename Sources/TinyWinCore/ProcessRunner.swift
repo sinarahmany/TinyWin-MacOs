@@ -35,8 +35,9 @@ public final class ProcessRunner: Sendable {
             throw TinyWinError.bottleNotFound(bottle.name)
         }
 
-        // Re-verify Wine-level filesystem isolation before every launch
+        // Re-verify Wine-level filesystem isolation and graphics backend DLLs before every launch
         try SandboxBuilder.enforcePrefixIsolation(prefixDir: prefixDir, security: bottle.security)
+        try runtime.applyGraphicsBackend(bottle.graphics.backend, toPrefix: prefixDir)
 
         // Resolve executable path (could be host file path, relative path inside drive_c, or builtin like `cmd`)
         let resolvedExeURL = resolveExecutableURL(executable, prefixDir: prefixDir)
@@ -226,11 +227,12 @@ public final class ProcessRunner: Sendable {
         // Graphics backend configuration
         switch bottle.graphics.backend {
         case .dxmt:
-            // DXMT v0.80 builtin hooks via winemetal.so -> Apple Metal
+            // DXMT v0.80 Direct3D 10/11 -> Apple Metal (best for 3D games)
             env["DXMT_ENABLE_NVEXT"] = "1"
             env["MTL_SHADER_CACHE_DIR"] = paths.bottleShaderCacheDir(id: bottle.id).path
+            env["WINEDLLPATH"] = "\(paths.dxmtDir.path):\(paths.wineLibDir.path)"
         case .wined3d:
-            // Force Wine's standard OpenGL/WineD3D fallback if a legacy app prefers it
+            // Stock WineD3D / MoltenVK -> Apple Metal (full Direct2D + SwapDeviceContextState support for Desktop Apps)
             env["WINEDLLOVERRIDES"] = "mscoree,mshtml=;winemetal=d"
         case .d3dmetal:
             if runtime.isD3DMetalInstalled {
