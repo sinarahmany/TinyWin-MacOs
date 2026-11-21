@@ -125,13 +125,25 @@ public final class ProcessRunner: Sendable {
 
         let outPipe = captureOutput ? Pipe() : nil
         let errPipe = captureOutput ? Pipe() : nil
+        var logFileHandle: FileHandle? = nil
         if captureOutput {
             proc.standardOutput = outPipe
             proc.standardError = errPipe
+        } else if !waitForExit {
+            // For GUI launches, capture stderr/stdout to a tiny single-run log file so users can inspect crashes
+            try? FileManager.default.createDirectory(at: paths.logsDir, withIntermediateDirectories: true)
+            let logURL = paths.logsDir.appendingPathComponent("\(bottle.id)-last.log")
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            if let fh = try? FileHandle(forWritingTo: logURL) {
+                logFileHandle = fh
+                proc.standardOutput = fh
+                proc.standardError = fh
+            }
         }
 
         let start = Date()
         try proc.run()
+        try? logFileHandle?.close()
 
         if !waitForExit {
             return ExecutionResult(
@@ -220,7 +232,7 @@ public final class ProcessRunner: Sendable {
         env["WINEARCH"] = "win64"
         env["TINYWIN_BOTTLE"] = bottle.id
         env["PATH"] = "\(paths.wineBinDir.path):/usr/bin:/bin:/usr/sbin:/sbin"
-        env["WINEDEBUG"] = bottle.graphics.quietLogs ? "-all" : "fixme-all,err+all"
+        env["WINEDEBUG"] = bottle.graphics.quietLogs ? "fixme-all,warn-all,err+all" : "fixme-all,err+all"
 
         // Low-overhead synchronization
         if bottle.graphics.fastSync {

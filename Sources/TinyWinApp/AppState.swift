@@ -255,6 +255,15 @@ final class AppState {
         NSWorkspace.shared.open(driveC)
     }
 
+    func openLastLog(for bottle: BottleConfig) {
+        let logURL = paths.logsDir.appendingPathComponent("\(bottle.id)-last.log")
+        if FileManager.default.fileExists(atPath: logURL.path) {
+            NSWorkspace.shared.open(logURL)
+        } else {
+            statusMessage = "No log recorded yet for '\(bottle.name)'."
+        }
+    }
+
     func removePinnedApp(bottle: BottleConfig, app: PinnedWindowsApp) {
         do {
             _ = try bottleManager.removePinnedApp(bottleID: bottle.id, appID: app.id)

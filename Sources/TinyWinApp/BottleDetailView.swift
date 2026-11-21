@@ -266,6 +266,12 @@ struct BottleDetailView: View {
                 Label("Windows CMD", systemImage: "terminal")
             }
 
+            Button {
+                state.openLastLog(for: bottle)
+            } label: {
+                Label("Last Log", systemImage: "doc.text")
+            }
+
             Spacer()
 
             Button(role: .destructive) {
