@@ -75,6 +75,9 @@ struct MainContentView: View {
         .sheet(isPresented: $state.showDiagnosticsSheet) {
             DiagnosticsSheet(state: state)
         }
+        .sheet(item: $state.pendingFolderImport) { pending in
+            FolderImportSheet(state: state, pending: pending)
+        }
         .overlay(alignment: .bottom) {
             if let err = state.errorMessage {
                 BannerView(text: err, isError: true) {

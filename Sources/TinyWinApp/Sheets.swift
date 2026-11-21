@@ -104,6 +104,90 @@ struct DiagnosticsSheet: View {
     }
 }
 
+struct FolderImportSheet: View {
+    @Bindable var state: AppState
+    let pending: AppState.PendingFolderImport
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedExe: URL
+    @State private var copyIntoBottle: Bool
+
+    init(state: AppState, pending: AppState.PendingFolderImport) {
+        self.state = state
+        self.pending = pending
+        let first = pending.executables.first ?? pending.folderURL
+        _selectedExe = State(initialValue: first)
+        let name = first.deletingPathExtension().lastPathComponent.lowercased()
+        let looksLikeInstaller = name.contains("setup") || name.contains("install") || first.pathExtension.lowercased() == "msi"
+        // Default to read-only I:\ mount for installers, and APFS copy into C:\Apps for portable apps/games
+        _copyIntoBottle = State(initialValue: !looksLikeInstaller)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "folder.fill.badge.gearshape")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pending.folderURL.lastPathComponent)
+                        .font(.title3.weight(.semibold))
+                    Text("Found \(pending.executables.count) executable\(pending.executables.count == 1 ? "" : "s") in this folder")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Form {
+                Picker("Executable to Run", selection: $selectedExe) {
+                    ForEach(pending.executables, id: \.self) { url in
+                        Text(relativeLabel(for: url)).tag(url)
+                    }
+                }
+
+                Picker("Install Mode", selection: $copyIntoBottle) {
+                    Text("Run Installer from Folder (Read-Only I:\\)").tag(false)
+                    Text("Import Portable App/Game into C:\\Apps (Read/Write)").tag(true)
+                }
+                .pickerStyle(.radioGroup)
+            }
+            .formStyle(.grouped)
+
+            Text(copyIntoBottle
+                 ? "Clones the entire folder into C:\\Apps using APFS copy-on-write (~0 extra disk space) so portable apps & games can save settings/progress inside the sandbox."
+                 : "Mounts only this folder read-only as I:\\ so multi-file installers can read sibling .bin/.cab/.dll files and install into C:\\Program Files without touching your Mac.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(copyIntoBottle ? "Import & Launch" : "Run Installer") {
+                    state.importAndLaunchFolder(
+                        bottle: pending.bottle,
+                        folderURL: pending.folderURL,
+                        selectedExecutable: selectedExe,
+                        copyIntoBottle: copyIntoBottle
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 500)
+    }
+
+    private func relativeLabel(for url: URL) -> String {
+        let base = pending.folderURL.standardizedFileURL.path
+        let rel = url.standardizedFileURL.path
+            .replacingOccurrences(of: base, with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return rel.isEmpty ? url.lastPathComponent : rel
+    }
+}
+
 private struct DiagRow: View {
     let label: String
     let value: String

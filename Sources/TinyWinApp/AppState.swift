@@ -34,6 +34,14 @@ final class AppState {
 
     var showCreateBottleSheet: Bool = false
     var showDiagnosticsSheet: Bool = false
+    var pendingFolderImport: PendingFolderImport?
+
+    struct PendingFolderImport: Identifiable {
+        let id = UUID()
+        let bottle: BottleConfig
+        let folderURL: URL
+        let executables: [URL]
+    }
 
     init() {
         self.runtime = RuntimeManager(paths: paths)
@@ -209,6 +217,66 @@ final class AppState {
                 }
             } catch {
                 await MainActor.run { [weak self] in
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func handleDroppedOrSelectedURL(_ url: URL, in bottle: BottleConfig) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else {
+            errorMessage = "File or folder not found: \(url.path)"
+            return
+        }
+        if isDir.boolValue {
+            let exes = bottleManager.discoverExecutables(in: url)
+            if exes.isEmpty {
+                errorMessage = "No .exe or .msi files found inside '\(url.lastPathComponent)'."
+                return
+            }
+            pendingFolderImport = PendingFolderImport(bottle: bottle, folderURL: url, executables: exes)
+        } else {
+            let ext = url.pathExtension.lowercased()
+            guard ext == "exe" || ext == "msi" else {
+                errorMessage = "Please drop a .exe, .msi, or a folder containing a Windows app/installer."
+                return
+            }
+            launchExecutable(in: bottle, path: url.path, pinIfFile: true)
+        }
+    }
+
+    func importAndLaunchFolder(bottle: BottleConfig, folderURL: URL, selectedExecutable: URL, copyIntoBottle: Bool) {
+        pendingFolderImport = nil
+        if !copyIntoBottle {
+            // Run directly from the folder (mounted read-only as I:\ so sibling installer files work!)
+            launchExecutable(in: bottle, path: selectedExecutable.path, pinIfFile: false)
+            return
+        }
+
+        isBusy = true
+        errorMessage = nil
+        statusMessage = "Importing '\(folderURL.lastPathComponent)' into bottle (APFS clone)..."
+        let bm = self.bottleManager
+        let relPath = selectedExecutable.standardizedFileURL.path
+            .replacingOccurrences(of: folderURL.standardizedFileURL.path, with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let importedDir = try bm.importFolder(folderURL, into: bottle)
+                let targetExe = importedDir.appendingPathComponent(relPath)
+                let appName = folderURL.lastPathComponent
+                _ = try bm.pinApp(bottleID: bottle.id, name: appName, executablePath: targetExe.path)
+                await MainActor.run { [weak self] in
+                    self?.isBusy = false
+                    self?.refreshAll()
+                    self?.statusMessage = "Imported '\(appName)' into C:\\Apps and launching..."
+                    self?.launchExecutable(in: bottle, path: targetExe.path, pinIfFile: false)
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.isBusy = false
                     self?.errorMessage = error.localizedDescription
                 }
             }

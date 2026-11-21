@@ -29,6 +29,7 @@ func printUsage() {
           --shared <folder>                        Expose one host folder as S:\\
       tinywin list                                 List all bottles, security, disk & RAM usage
       tinywin run <bottle> <exe|cmd> [args...]     Run a Windows .exe, .msi, or builtin (cmd, notepad, winecfg)
+      tinywin import <bottle> <folder>             Import a multi-file portable app/game folder into C:\\Apps (APFS CoW)
       tinywin wrap <bottle> <exe> [options]        Create a native macOS .app launcher for a Windows .exe
           --name <AppName>                         Custom macOS .app name
           --out <dir>                              Output directory (default: ~/Applications/TinyWin Apps)
@@ -196,6 +197,26 @@ func main() -> Int32 {
                 waitForExit: true
             )
             return result.exitCode
+
+        case "import":
+            guard args.count >= 3 else {
+                fputs("Error: Usage: tinywin import <bottle> <folder>\n", stderr)
+                return 2
+            }
+            let bottle = try bottles.loadBottle(idOrName: args[1])
+            let folder = URL(fileURLWithPath: args[2], isDirectory: true)
+            let dest = try bottles.importFolder(folder, into: bottle)
+            let exes = bottles.discoverExecutables(in: dest)
+            print("Imported folder into bottle '\(bottle.name)' at: \(dest.path)")
+            if let primary = exes.first {
+                let appName = primary.deletingPathExtension().lastPathComponent
+                _ = try? bottles.pinApp(bottleID: bottle.id, name: appName, executablePath: primary.path)
+                print("Pinned primary executable: \(primary.lastPathComponent)")
+            }
+            if exes.count > 1 {
+                print("Other executables found: \(exes.dropFirst().map(\.lastPathComponent).joined(separator: ", "))")
+            }
+            return 0
 
         case "wrap":
             guard args.count >= 3 else {

@@ -8,6 +8,7 @@ struct BottleDetailView: View {
 
     @State private var isDropTargeted = false
     @State private var showFileImporter = false
+    @State private var showFolderImporter = false
     @State private var confirmDelete = false
 
     private var stats: BottleStats? {
@@ -34,7 +35,16 @@ struct BottleDetailView: View {
             allowsMultipleSelection: false
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
-                state.launchExecutable(in: bottle, path: url.path, pinIfFile: true)
+                state.handleDroppedOrSelectedURL(url, in: bottle)
+            }
+        }
+        .fileImporter(
+            isPresented: $showFolderImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                state.handleDroppedOrSelectedURL(url, in: bottle)
             }
         }
         .confirmationDialog(
@@ -90,6 +100,14 @@ struct BottleDetailView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
+                Button {
+                    showFolderImporter = true
+                } label: {
+                    Label("Add Folder", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .help("Install from a multi-file folder or import a portable Windows app/game folder")
+
                 if stats?.isRunning == true {
                     Button(role: .destructive) {
                         state.killProcesses(in: bottle)
@@ -107,9 +125,9 @@ struct BottleDetailView: View {
             Image(systemName: "arrow.down.doc")
                 .font(.title2)
                 .foregroundStyle(isDropTargeted ? Color.accentColor : Color.secondary)
-            Text("Drop any Windows .exe or .msi here to launch & pin")
+            Text("Drop any Windows .exe, .msi, or entire app/installer folder here")
                 .font(.callout.weight(.medium))
-            Text("Validated via PE header inspection · Executed inside Seatbelt sandbox")
+            Text("Multi-file installers mount read-only as I:\\ · Portable folders clone cleanly into C:\\Apps")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -130,10 +148,8 @@ struct BottleDetailView: View {
             guard let provider = providers.first else { return false }
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
-                let ext = url.pathExtension.lowercased()
-                guard ext == "exe" || ext == "msi" else { return }
                 Task { @MainActor in
-                    state.launchExecutable(in: bottle, path: url.path, pinIfFile: true)
+                    state.handleDroppedOrSelectedURL(url, in: bottle)
                 }
             }
             return true

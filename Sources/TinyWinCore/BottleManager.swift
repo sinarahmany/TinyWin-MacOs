@@ -219,6 +219,84 @@ public final class BottleManager: Sendable {
         return bottle
     }
 
+    /// Discovers `.exe` and `.msi` files inside a dropped folder (root + 1 level deep),
+    /// prioritizing installers / primary executables over uninstallers.
+    public func discoverExecutables(in folder: URL) -> [URL] {
+        let fm = FileManager.default
+        var found: [URL] = []
+
+        func scan(_ dir: URL, depth: Int) {
+            guard let items = try? fm.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { return }
+
+            for item in items {
+                let ext = item.pathExtension.lowercased()
+                if ext == "exe" || ext == "msi" {
+                    found.append(item.standardizedFileURL)
+                } else if depth < 1,
+                          let vals = try? item.resourceValues(forKeys: [.isDirectoryKey]),
+                          vals.isDirectory == true {
+                    scan(item, depth: depth + 1)
+                }
+            }
+        }
+
+        scan(folder.standardizedFileURL, depth: 0)
+
+        return found.sorted { a, b in
+            let scoreA = executablePriorityScore(a, rootFolder: folder)
+            let scoreB = executablePriorityScore(b, rootFolder: folder)
+            if scoreA != scoreB { return scoreA > scoreB }
+            return a.lastPathComponent.localizedCaseInsensitiveCompare(b.lastPathComponent) == .orderedAscending
+        }
+    }
+
+    private func executablePriorityScore(_ url: URL, rootFolder: URL) -> Int {
+        let name = url.deletingPathExtension().lastPathComponent.lowercased()
+        let inRoot = url.deletingLastPathComponent().standardizedFileURL == rootFolder.standardizedFileURL
+        var score = inRoot ? 50 : 0
+        if name.contains("unins") || name.contains("crash") || name.contains("redist") || name.contains("vcredist") {
+            score -= 100
+        }
+        if name == "setup" || name == "install" || name.hasPrefix("setup") || name.hasPrefix("install") {
+            score += 30
+        }
+        if url.pathExtension.lowercased() == "msi" {
+            score += 20
+        }
+        return score
+    }
+
+    /// Copies a portable multi-file app or game folder into `C:\Apps\<FolderName>` inside the bottle
+    /// using APFS copy-on-write cloning (instant, ~0 extra disk blocks on APFS) so it has full read/write
+    /// inside the sandbox for save files and configuration.
+    public func importFolder(_ sourceFolder: URL, into bottle: BottleConfig) throws -> URL {
+        let fm = FileManager.default
+        let normSrc = sourceFolder.standardizedFileURL
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: normSrc.path, isDirectory: &isDir), isDir.boolValue else {
+            throw TinyWinError.ioError("Not a directory: \(normSrc.path)")
+        }
+
+        let appsRoot = paths.bottlePrefixDir(id: bottle.id).appendingPathComponent("drive_c/Apps", isDirectory: true)
+        try fm.createDirectory(at: appsRoot, withIntermediateDirectories: true)
+
+        let rawName = normSrc.lastPathComponent
+            .replacingOccurrences(of: "/", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let folderName = rawName.isEmpty ? "ImportedApp" : rawName
+        let destination = appsRoot.appendingPathComponent(folderName, isDirectory: true)
+
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try cloneDirectoryAPFS(from: normSrc, to: destination)
+        return destination
+    }
+
     /// Computes live disk footprint and running process / RAM usage for a bottle.
     public func stats(for bottle: BottleConfig) -> BottleStats {
         let dir = paths.bottleDir(id: bottle.id)

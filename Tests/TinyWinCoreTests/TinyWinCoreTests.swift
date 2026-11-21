@@ -163,4 +163,35 @@ final class TinyWinCoreTests: XCTestCase {
         XCTAssertFalse(gameBottle.graphics.retinaMode)
         XCTAssertEqual(gameBottle.graphics.dpi, 96)
     }
+
+    func testFolderDiscoveryAndPortableImport() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = TinyWinPaths(rootDir: dir.appendingPathComponent("tinywin_home", isDirectory: true))
+        let bm = BottleManager(paths: paths)
+
+        // Create a mock multi-file app/installer folder
+        let pkg = dir.appendingPathComponent("OpenGame", isDirectory: true)
+        let sub = pkg.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        try makeMinimalPEBytes(machine: 0x8664, subsystem: 2).write(to: pkg.appendingPathComponent("unins000.exe"))
+        try makeMinimalPEBytes(machine: 0x8664, subsystem: 2).write(to: pkg.appendingPathComponent("setup.exe"))
+        try makeMinimalPEBytes(machine: 0x8664, subsystem: 2).write(to: sub.appendingPathComponent("helper.exe"))
+        try Data("assets".utf8).write(to: pkg.appendingPathComponent("data1.bin"))
+
+        let exes = bm.discoverExecutables(in: pkg)
+        XCTAssertEqual(exes.first?.lastPathComponent, "setup.exe")
+        XCTAssertEqual(exes.last?.lastPathComponent, "unins000.exe")
+
+        // Create a mock bottle dir and import the whole folder
+        let bottle = BottleConfig(id: "testb", name: "TestB")
+        try FileManager.default.createDirectory(
+            at: paths.bottlePrefixDir(id: bottle.id).appendingPathComponent("drive_c"),
+            withIntermediateDirectories: true
+        )
+        let imported = try bm.importFolder(pkg, into: bottle)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.appendingPathComponent("data1.bin").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.appendingPathComponent("bin/helper.exe").path))
+    }
 }
