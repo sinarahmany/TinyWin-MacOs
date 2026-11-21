@@ -152,6 +152,12 @@ public enum SandboxBuilder {
             try? fm.createSymbolicLink(atPath: sDrive.path, withDestinationPath: shared)
         }
 
+        // 2b. Remove any stale temporary external-folder mount (I:\) before launch sets a fresh one if needed
+        let iDrive = dosdevices.appendingPathComponent("i:")
+        if fm.fileExists(atPath: iDrive.path) || (try? fm.destinationOfSymbolicLink(atPath: iDrive.path)) != nil {
+            try? fm.removeItem(at: iDrive)
+        }
+
         // 3. Replace user-folder symlinks with isolated directories inside the bottle
         if security.isolateUserFolders {
             let usersDir = prefixDir.appendingPathComponent("drive_c/users", isDirectory: true)

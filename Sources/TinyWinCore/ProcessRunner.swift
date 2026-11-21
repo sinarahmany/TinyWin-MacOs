@@ -43,6 +43,7 @@ public final class ProcessRunner: Sendable {
         let resolvedExeURL = resolveExecutableURL(executable, prefixDir: prefixDir)
         var extraReadOnlyPaths: [URL] = []
         var isMSI = false
+        var wineTargetPath: String? = resolvedExeURL?.path
 
         if let exeURL = resolvedExeURL {
             if validatePE {
@@ -71,18 +72,24 @@ public final class ProcessRunner: Sendable {
                     // Only expose the single executable file, never the whole Downloads/Desktop folder!
                     extraReadOnlyPaths.append(exeURL)
                 } else {
-                    // App lives in its own folder (e.g. a portable app or game directory)
+                    // App/installer lives in its own folder (e.g. multi-file installer with .bin/.cab/.dll siblings).
+                    // Expose ONLY this folder read-only in Seatbelt and map it as I:\ so Windows installers
+                    // can read sibling data files without needing Z:\ host root access!
                     extraReadOnlyPaths.append(parent)
+                    let iDrive = prefixDir.appendingPathComponent("dosdevices/i:")
+                    try? FileManager.default.removeItem(at: iDrive)
+                    try? FileManager.default.createSymbolicLink(atPath: iDrive.path, withDestinationPath: parent.path)
+                    wineTargetPath = "I:\\\(exeURL.lastPathComponent)"
                 }
             }
         }
 
         // Build Wine arguments cleanly (zero shell interpolation!)
         var wineArgs: [String] = []
-        if isMSI, let exeURL = resolvedExeURL {
-            wineArgs = ["msiexec", "/i", exeURL.path] + arguments
+        if isMSI, let target = wineTargetPath {
+            wineArgs = ["msiexec", "/i", target] + arguments
         } else {
-            wineArgs = [resolvedExeURL?.path ?? executable] + arguments
+            wineArgs = [wineTargetPath ?? executable] + arguments
         }
 
         // Construct environment
